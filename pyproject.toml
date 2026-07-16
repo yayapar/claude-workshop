@@ -12,10 +12,74 @@ requires-python = ">=3.14"
 notes-tags = "app.notes_tags:main"
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "pre-commit>=4", "mypy>=1.16", "ruff>=0.11"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/app"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+# ── Ruff ─────────────────────────────────────────────────────────────────────
+[tool.ruff]
+target-version = "py314"
+line-length = 99
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors (PEP 8)
+    "W",      # pycodestyle warnings (PEP 8)
+    "F",      # Pyflakes (unused imports, undefined names, etc.)
+    "I",      # isort (import ordering)
+    "N",      # pep8-naming (PEP 8 naming conventions)
+    "UP",     # pyupgrade (modernise syntax to target Python version)
+    "B",      # flake8-bugbear (common bugs & design problems)
+    "A",      # flake8-builtins (shadowing built-in names)
+    "SIM",    # flake8-simplify (simplifiable constructs)
+    "S",      # flake8-bandit (security issues)
+    "C4",     # flake8-comprehensions (better list/dict/set comprehensions)
+    "DTZ",    # flake8-datetimez (naive datetime usage)
+    "T20",    # flake8-print (print statements left in code)
+    "PT",     # flake8-pytest-style (pytest best practices)
+    "RET",    # flake8-return (unnecessary return statements)
+    "RUF",    # Ruff-specific rules
+    "PERF",   # Perflint (performance anti-patterns)
+    "FURB",   # refurb (modern Python idioms)
+    "LOG",    # flake8-logging (logging best practices)
+    "FLY",    # flynt (use f-strings)
+    "PIE",    # flake8-pie (misc lints)
+    "TID",    # flake8-tidy-imports
+    "TCH",    # flake8-type-checking (move imports behind TYPE_CHECKING)
+]
+ignore = [
+    "S101",   # assert is fine in tests
+    "T201",   # print() is used intentionally in CLI output
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "S101",   # assert is expected in tests
+    "S603",   # subprocess calls in tests are fine
+    "S607",   # partial executable paths in tests are fine
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+
+# ── mypy ─────────────────────────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.14"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_decorators = false
