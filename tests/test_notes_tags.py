@@ -1,0 +1,165 @@
+import io
+from pathlib import Path
+
+import pytest
+
+from app.notes_tags import count_tags, extract_tags, iter_markdown, main, notes_tags
+
+NOTES = Path(__file__).parent / "data" / "notes"
+
+
+class TestExtractTags:
+    def test_finds_tags_and_preserves_order(self):
+        assert extract_tags("#beta then #alpha then #beta") == ["beta", "alpha", "beta"]
+
+    def test_tag_at_start_of_line(self):
+        assert extract_tags("#alpha leads the line") == ["alpha"]
+
+    @pytest.mark.parametrize("text", ["# Heading", "## Sub-heading", "###### Deep"])
+    def test_headings_are_not_tags(self, text):
+        assert extract_tags(text) == []
+
+    def test_url_fragment_is_not_a_tag(self):
+        assert extract_tags("see https://example.com/docs#install now") == []
+
+    def test_numeric_reference_is_not_a_tag(self):
+        assert extract_tags("fixes #123") == []
+
+    def test_alphanumeric_tag_is_allowed(self):
+        assert extract_tags("#py3 and #v2rollout") == ["py3", "v2rollout"]
+
+    def test_fenced_code_is_skipped(self):
+        text = "#kept\n\n```python\n# comment\nx = '#hidden'\n```\n\n#also-kept"
+        assert extract_tags(text) == ["kept", "also-kept"]
+
+    def test_tilde_fenced_code_is_skipped(self):
+        assert extract_tags("~~~\n#hidden\n~~~\n#kept") == ["kept"]
+
+    def test_unclosed_fence_swallows_rest_of_file(self):
+        assert extract_tags("#kept\n```\n#hidden\n") == ["kept"]
+
+    def test_inline_code_is_skipped(self):
+        assert extract_tags("use `#hidden` but keep #kept") == ["kept"]
+
+    def test_nested_tags_are_kept_whole(self):
+        assert extract_tags("#project/alpha") == ["project/alpha"]
+
+    @pytest.mark.parametrize(
+        "text, expected",
+        [
+            ("#done.", "done"),
+            ("#done,", "done"),
+            ("#done!", "done"),
+            ("#done?", "done"),
+            ("(#done)", "done"),
+            ("#done's", "done"),
+            ("#project/", "project"),
+            ("#done-", "done"),
+        ],
+    )
+    def test_surrounding_punctuation_is_trimmed(self, text, expected):
+        assert extract_tags(text) == [expected]
+
+    def test_hyphens_and_underscores_are_kept(self):
+        assert extract_tags("#in-progress #needs_review") == ["in-progress", "needs_review"]
+
+    def test_tags_are_case_sensitive(self):
+        assert extract_tags("#Python #python") == ["Python", "python"]
+
+    def test_empty_text(self):
+        assert extract_tags("") == []
+
+
+class TestIterMarkdown:
+    def test_finds_markdown_recursively_and_ignores_other_files(self):
+        found = {p.relative_to(NOTES).as_posix() for p in iter_markdown(NOTES)}
+        assert found == {
+            "basic.md",
+            "edge-cases.md",
+            "headings-and-code.md",
+            "no-tags.md",
+            "sub/nested-note.md",
+        }
+
+    def test_single_file_path(self):
+        assert list(iter_markdown(NOTES / "basic.md")) == [NOTES / "basic.md"]
+
+    def test_missing_path_raises(self, tmp_path):
+        with pytest.raises(FileNotFoundError):
+            list(iter_markdown(tmp_path / "nope"))
+
+
+class TestCountTags:
+    def test_counts_across_the_example_notes(self):
+        assert count_tags(NOTES) == {
+            "python": 4,  # three in basic.md, one in sub/nested-note.md
+            "testing": 2,
+            "markdown": 2,
+            "project/alpha": 1,
+            "project/beta": 1,
+            "done": 1,
+            "shipped": 1,
+            "wrapped": 1,
+            "in-progress": 1,
+            "needs_review": 1,
+            "recursion": 1,
+        }
+
+    def test_counts_a_single_file(self):
+        assert count_tags(NOTES / "basic.md") == {"python": 3, "testing": 2}
+
+    def test_file_without_tags(self):
+        assert count_tags(NOTES / "no-tags.md") == {}
+
+    def test_accepts_a_string_path(self):
+        assert count_tags(str(NOTES / "basic.md")) == {"python": 3, "testing": 2}
+
+    def test_empty_directory(self, tmp_path):
+        assert count_tags(tmp_path) == {}
+
+
+class TestNotesTags:
+    def test_prints_each_tag_with_its_count_sorted(self, tmp_path):
+        (tmp_path / "note.md").write_text("#beta #alpha #beta #Gamma\n")
+        out = io.StringIO()
+        notes_tags(tmp_path, file=out)
+        assert [line.split() for line in out.getvalue().splitlines()] == [
+            ["#alpha", "1"],
+            ["#beta", "2"],
+            ["#Gamma", "1"],
+        ]
+
+    def test_columns_are_aligned(self, tmp_path):
+        (tmp_path / "note.md").write_text("#a #considerably-longer\n")
+        out = io.StringIO()
+        notes_tags(tmp_path, file=out)
+        lines = out.getvalue().splitlines()
+        assert [line.rindex("1") for line in lines] == [len(lines[1]) - 1] * 2
+
+    def test_returns_the_counts(self, tmp_path):
+        (tmp_path / "note.md").write_text("#alpha #alpha\n")
+        assert notes_tags(tmp_path, file=io.StringIO()) == {"alpha": 2}
+
+    def test_prints_nothing_when_there_are_no_tags(self, tmp_path):
+        (tmp_path / "note.md").write_text("just prose\n")
+        out = io.StringIO()
+        notes_tags(tmp_path, file=out)
+        assert out.getvalue() == ""
+
+
+class TestMain:
+    def test_scans_the_given_path(self, capsys):
+        assert main([str(NOTES / "basic.md")]) == 0
+        assert capsys.readouterr().out == "#python   3\n#testing  2\n"
+
+    def test_defaults_to_the_working_directory(self, tmp_path, monkeypatch, capsys):
+        (tmp_path / "note.md").write_text("#alpha\n")
+        monkeypatch.chdir(tmp_path)
+        assert main([]) == 0
+        assert capsys.readouterr().out == "#alpha  1\n"
+
+    def test_missing_path_reports_an_error(self, tmp_path, capsys):
+        assert main([str(tmp_path / "nope")]) == 1
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "notes-tags:" in captured.err
