@@ -35,6 +35,19 @@ class TestExtractTags:
     def test_tilde_fenced_code_is_skipped(self):
         assert extract_tags("~~~\n#hidden\n~~~\n#kept") == ["kept"]
 
+    def test_shorter_inner_fence_does_not_close_a_longer_outer_fence(self):
+        assert extract_tags("````\n```\n#hidden\n```\n````\n#kept") == ["kept"]
+
+    def test_longer_closing_fence_is_allowed(self):
+        assert extract_tags("```\n#hidden\n``````\n#kept") == ["kept"]
+
+    def test_a_different_fence_character_does_not_close(self):
+        assert extract_tags("```\n~~~\n#hidden\n```\n#kept") == ["kept"]
+
+    def test_info_string_does_not_close_a_fence(self):
+        # "```python" inside a block is content, not a terminator.
+        assert extract_tags("```\n```python\n#hidden\n```\n#kept") == ["kept"]
+
     def test_unclosed_fence_swallows_rest_of_file(self):
         assert extract_tags("#kept\n```\n#hidden\n") == ["kept"]
 
@@ -84,9 +97,23 @@ class TestIterMarkdown:
     def test_single_file_path(self):
         assert list(iter_markdown(NOTES / "basic.md")) == [NOTES / "basic.md"]
 
-    def test_missing_path_raises(self, tmp_path):
+    def test_hidden_directories_are_skipped(self):
+        # tests/data/notes/.obsidian/plugin-readme.md exists and must not appear.
+        assert not any(".obsidian" in p.parts for p in iter_markdown(NOTES))
+
+    def test_a_dotted_root_is_still_scanned(self, tmp_path):
+        # Hidden-ness is judged relative to the root, so pointing at a dotted
+        # directory on purpose must not filter everything away.
+        root = tmp_path / ".obsidian"
+        root.mkdir()
+        (root / "note.md").write_text("#alpha\n")
+        assert [p.name for p in iter_markdown(root)] == ["note.md"]
+
+    def test_missing_path_raises_eagerly(self, tmp_path):
+        # Not wrapped in list(): the error must surface at call time, not on
+        # first iteration.
         with pytest.raises(FileNotFoundError):
-            list(iter_markdown(tmp_path / "nope"))
+            iter_markdown(tmp_path / "nope")
 
 
 class TestCountTags:
@@ -116,6 +143,27 @@ class TestCountTags:
 
     def test_empty_directory(self, tmp_path):
         assert count_tags(tmp_path) == {}
+
+    def test_hidden_directories_contribute_nothing(self, tmp_path):
+        (tmp_path / "note.md").write_text("#alpha\n")
+        vendored = tmp_path / ".venv"
+        vendored.mkdir()
+        (vendored / "README.md").write_text("#vendored\n")
+        assert count_tags(tmp_path) == {"alpha": 1}
+
+    def test_byte_order_mark_does_not_swallow_the_first_tag(self, tmp_path):
+        note = tmp_path / "bom.md"
+        note.write_bytes(b"\xef\xbb\xbf#alpha and #beta\n")
+        assert count_tags(note) == {"alpha": 1, "beta": 1}
+
+    def test_undecodable_note_does_not_abort_the_scan(self, tmp_path):
+        (tmp_path / "good.md").write_text("#alpha\n")
+        (tmp_path / "latin.md").write_bytes("#caf\xe9 and #beta\n".encode("latin-1"))
+        # The malformed byte costs us that one tag, but #beta in the same file
+        # and every tag in every other file still land.
+        counts = count_tags(tmp_path)
+        assert counts["alpha"] == 1
+        assert counts["beta"] == 1
 
 
 class TestNotesTags:
@@ -163,3 +211,20 @@ class TestMain:
         captured = capsys.readouterr()
         assert captured.out == ""
         assert "notes-tags:" in captured.err
+
+    def test_undecodable_note_does_not_raise(self, tmp_path, capsys):
+        # UnicodeDecodeError is a ValueError, so it would sail past the OSError
+        # handler and reach the user as a traceback.
+        (tmp_path / "latin.md").write_bytes("#alpha tag\n".encode("latin-1") + b"\xff\xfe")
+        assert main([str(tmp_path)]) == 0
+        assert capsys.readouterr().out == "#alpha  1\n"
+
+    def test_unreadable_directory_reports_an_error(self, tmp_path, capsys):
+        note = tmp_path / "note.md"
+        note.write_text("#alpha\n")
+        note.chmod(0o000)
+        try:
+            assert main([str(note)]) == 1
+            assert "notes-tags:" in capsys.readouterr().err
+        finally:
+            note.chmod(0o644)
