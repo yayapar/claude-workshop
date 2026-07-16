@@ -11,13 +11,18 @@ parser inside a tag counter:
   line, so a tag on its second line can leak.
 """
 
+from __future__ import annotations
+
 import argparse
 import re
 import sys
 from collections import Counter
-from collections.abc import Iterator
 from pathlib import Path
-from typing import TextIO
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from typing import TextIO
 
 __all__ = ["count_tags", "extract_tags", "iter_markdown", "main", "notes_tags"]
 

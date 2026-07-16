@@ -1,0 +1,35 @@
+# See https://pre-commit.com for more information
+# See https://pre-commit.com/hooks.html for more hooks
+repos:
+  # ── Ruff: lightning-fast linter + formatter (replaces flake8, isort, black) ──
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.11.13
+    hooks:
+      # Lint first — catches style, import, and correctness issues
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      # Format second — enforces consistent PEP 8 style
+      - id: ruff-format
+
+  # ── mypy: static type checking (run locally so it sees pyproject.toml) ──
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        entry: uv run mypy
+        language: system
+        types: [python]
+        pass_filenames: false
+        args: [src, tests]
+
+  # ── General file hygiene ──
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+      - id: check-merge-conflict
+      - id: debug-statements
